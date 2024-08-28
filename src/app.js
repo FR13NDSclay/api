@@ -124,15 +124,26 @@ app.get('/', async (req, res) => {
     }
 });
 
-// Route to handle HLS playlist request
+// Route to handle HLS playlist request with custom content
 app.get('/:videoId/hls/:quality/main.m3u8', async (req, res) => {
     const { videoId, quality } = req.params;
     const url = `${main_url}https://d1d34p8vz63oiq.cloudfront.net/${videoId}/master.mpd&quality=${quality}`;
 
+    // Custom HLS content
+    const customHLSContent = `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:6
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-KEY:METHOD=AES-128,URI="https://api.penpencil.co/v1/videos/get-hls-key?videoKey=${videoId}&key=enc.key&authorization=${access_token}",IV=0x00000000000000000000000000000000
+#EXTINF:6.000000,
+${url}?Policy=${access_token}
+#EXTINF:6.000000,`;
+
     try {
         const response = await axios.get(url);
         res.set('Content-Type', 'text/plain');
-        res.send(response.data);
+        res.send(customHLSContent);
     } catch (error) {
         res.status(401).send(error.message);
     }

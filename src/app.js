@@ -5,9 +5,8 @@ const crypto = require('crypto');
 
 // Read configuration from environment variables
 const PORT = process.env.PORT || 6931;
-
-let access_token = process.env.ACCESS_TOKEN; // Only one access token
-const refresh_token = process.env.REFRESH_TOKEN; // Only one refresh token
+let access_token = process.env.ACCESS_TOKEN; // mutable access_token to be updated after refreshing
+const refresh_token = process.env.REFRESH_TOKEN;
 const main_url = process.env.MAIN_URL;
 
 const app = express();
@@ -24,7 +23,6 @@ const verifyToken = async (token) => {
         });
         return response.data.data.isVerified;
     } catch (error) {
-        console.error(`Token verification error: ${error.message}`);
         return false;
     }
 };
@@ -47,7 +45,7 @@ const refreshToken = async () => {
         console.log('Access Token Updated');
         return access_token;
     } catch (error) {
-        console.error(`Error refreshing token: ${error.message}`);
+        console.error('Error refreshing token:', error.message);
         return null;
     }
 };
@@ -66,22 +64,22 @@ const getDecryptCookie = (cookie) => {
 // Route to handle the main logic
 app.get('/', async (req, res) => {
     const videoId = req.query.id;
-    let token = req.query.token || access_token; // Use query token if provided, otherwise use the access token from environment
+    let token = req.query.token || access_token; // Use query token if provided, otherwise use the current access token
     const quality = req.query.quality || '720';
 
     // Verify the token
     let isTokenVerified = await verifyToken(token);
     if (!isTokenVerified) {
-        token = await refreshToken(); // Refresh token if verification fails
+        token = await refreshToken(); // Refresh the token if verification fails
         if (!token) {
-            return res.status(400).send({ msg: 'Unable to refresh token' });
+            return res.status(400).send({ msg: "Unable to refresh token" });
         }
         isTokenVerified = await verifyToken(token);
     }
 
     if (isTokenVerified) {
         if (!videoId) {
-            return res.status(400).send({ msg: 'No ID Parameter Found' });
+            return res.status(400).send({ msg: "No ID Parameter Found" });
         }
 
         try {
@@ -107,24 +105,30 @@ app.get('/', async (req, res) => {
             });
             decryptedResponse = decryptedResponse.slice(0, -1);
 
-            // Construct the URL to fetch the video stream
-            const videoUrl = `https://cors.pwjarvis.app/${videoId}/hls/${quality}/main.m3u8`;
+            // Construct the final HLS URL
+            const hlsUrl = `https://cors.pwjarvis.app/${videoId}/hls/${quality}/main.m3u8`;
 
             try {
-                const main_data = await axios.get(videoUrl);
+                const main_data = await axios.get(hlsUrl);
+
+                // Replace .ts and key URLs within the m3u8 playlist to include authorization tokens
+                const pattern = /(\d{3,4}\.ts)/g;
+                const replacement = `${hlsUrl}/$1${decryptedResponse}`;
+                const newText = main_data.data
+                    .replace(pattern, replacement)
+                    .replace("enc.key", `enc.key&authorization=${token}`);
+
                 res.set('Content-Type', 'text/plain');
                 res.set('Access-Control-Allow-Origin', '*');
-                res.status(200).send(main_data.data);
+                res.status(200).send(newText);
             } catch (error) {
-                console.error(`Error fetching video stream: ${error.message}`);
-                res.status(400).send({ msg: 'Your video URL is incorrect or Please choose another resolution' });
+                res.status(400).send({ msg: "Your video URL is incorrect or Please choose another resolution" });
             }
         } catch (error) {
-            console.error(`Error processing request: ${error.message}`);
             res.status(500).send('Error on privacy link: ' + error.message);
         }
     } else {
-        res.status(401).send('Invalid or expired token.');
+        res.status(401).send("Invalid or expired token.");
     }
 });
 

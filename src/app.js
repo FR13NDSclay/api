@@ -5,8 +5,9 @@ const crypto = require('crypto');
 
 // Read configuration from environment variables
 const PORT = process.env.PORT || 6931;
-const access_token = process.env.ACCESS_TOKEN;
-const refresh_token = process.env.REFRESH_TOKEN;
+
+let access_token = process.env.ACCESS_TOKEN; // Only one access token
+const refresh_token = process.env.REFRESH_TOKEN; // Only one refresh token
 const main_url = process.env.MAIN_URL;
 
 const app = express();
@@ -40,26 +41,26 @@ const refreshToken = async () => {
             }
         });
 
-        // Update tokens if necessary
-
-        console.log("Token Updated");
-        return response.data.data.access_token;
+        // Update the access token
+        access_token = response.data.data.access_token;
+        console.log(`Access Token Updated`);
+        return access_token;
     } catch (error) {
-        console.error("Error refreshing token:", error.message);
+        console.error(`Error refreshing token:`, error.message);
         return null;
     }
 };
 
 // Route to handle the main logic
 app.get('/', async (req, res) => {
-    const reqUrl = req.query.url;
-    const quality = req.query.quality;
+    const videoId = req.query.id;
+    let token = req.query.token || access_token; // Use query token if provided, otherwise use the access token from environment
+    const quality = req.query.quality || "720";
 
-    let token = access_token;
+    // Verify the token
     let isTokenVerified = await verifyToken(token);
-
     if (!isTokenVerified) {
-        token = await refreshToken();
+        token = await refreshToken();  // Refresh token if verification fails
         if (!token) {
             return res.status(400).send({ msg: "Unable to refresh token" });
         }
@@ -67,14 +68,13 @@ app.get('/', async (req, res) => {
     }
 
     if (isTokenVerified) {
-        if (!reqUrl || !quality) {
-            return res.status(400).send({ msg: "No URL Parameter Found" });
+        if (!videoId) {
+            return res.status(400).send({ msg: "No ID Parameter Found" });
         }
 
         try {
-            const mainUrl = reqUrl.replace('master.mpd', `hls/${quality}`);
             const policyEncrypted = await axios.post('https://api.penpencil.co/v3/files/send-analytics-data', {
-                'url': `${mainUrl}/main.m3u8`
+                'url': `https://d1d34p8vz63oiq.cloudfront.net/${videoId}/hls/`
             }, {
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 24_6 like Mac OS X) AppleWebKit/605.5.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1',
@@ -103,16 +103,14 @@ app.get('/', async (req, res) => {
             });
             decryptedResponse = decryptedResponse.slice(0, -1);
 
-            const policy_Url = mainUrl + "/main.m3u8" + decryptedResponse;
+            const Url = `https://cors.pwjarvis.app/${videoId}/hls/${quality}/main.m3u8`;
 
             try {
-                const main_data = await axios.get(policy_Url);
-                const pattern = /(\d{3,4}\.ts)/g;
-                const replacement = `${mainUrl}/$1${decryptedResponse}`;
-                const newText = main_data.data.replace(pattern, replacement).replace("enc.key", `enc.key&authorization=${token}`);
+                const main_data = await axios.get(Url);
 
                 res.set('Content-Type', 'text/plain');
-                res.status(200).send(newText);
+                res.set('Access-Control-Allow-Origin', '*');
+                res.status(200).send(main_data.data);
             } catch (error) {
                 res.status(400).send({ msg: "Your video URL is incorrect or Please choose another resolution" });
             }
@@ -121,31 +119,6 @@ app.get('/', async (req, res) => {
         }
     } else {
         res.status(401).send("Invalid or expired token.");
-    }
-});
-
-// Route to handle HLS playlist request with custom content
-app.get('/:videoId/hls/:quality/main.m3u8', async (req, res) => {
-    const { videoId, quality } = req.params;
-    const url = `${main_url}https://d1d34p8vz63oiq.cloudfront.net/${videoId}/master.mpd&quality=${quality}`;
-
-    // Custom HLS content
-    const customHLSContent = `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:6
-#EXT-X-MEDIA-SEQUENCE:0
-#EXT-X-PLAYLIST-TYPE:VOD
-#EXT-X-KEY:METHOD=AES-128,URI="https://api.penpencil.co/v1/videos/get-hls-key?videoKey=${videoId}&key=enc.key&authorization=${access_token}",IV=0x00000000000000000000000000000000
-#EXTINF:6.000000,
-${url}?Policy=${access_token}
-#EXTINF:6.000000,`;
-
-    try {
-        const response = await axios.get(url);
-        res.set('Content-Type', 'text/plain');
-        res.send(customHLSContent);
-    } catch (error) {
-        res.status(401).send(error.message);
     }
 });
 

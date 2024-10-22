@@ -24,6 +24,7 @@ const verifyToken = async (token) => {
         });
         return response.data.data.isVerified;
     } catch (error) {
+        console.error(`Token verification error: ${error.message}`);
         return false;
     }
 };
@@ -43,36 +44,48 @@ const refreshToken = async () => {
 
         // Update the access token
         access_token = response.data.data.access_token;
-        console.log(`Access Token Updated`);
+        console.log('Access Token Updated');
         return access_token;
     } catch (error) {
-        console.error(`Error refreshing token:`, error.message);
+        console.error(`Error refreshing token: ${error.message}`);
         return null;
     }
+};
+
+// Function to decrypt cookies
+const getDecryptCookie = (cookie) => {
+    const key = Buffer.from('pw3c199c2911cb437a907b1k0907c17n', 'utf8');
+    const iv = Buffer.from('5184781c32kkc4e8', 'utf8');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+
+    let decryptedCookie = decipher.update(cookie, 'base64', 'utf8');
+    decryptedCookie += decipher.final('utf8');
+    return decryptedCookie;
 };
 
 // Route to handle the main logic
 app.get('/', async (req, res) => {
     const videoId = req.query.id;
     let token = req.query.token || access_token; // Use query token if provided, otherwise use the access token from environment
-    const quality = req.query.quality || "720";
+    const quality = req.query.quality || '720';
 
     // Verify the token
     let isTokenVerified = await verifyToken(token);
     if (!isTokenVerified) {
-        token = await refreshToken();  // Refresh token if verification fails
+        token = await refreshToken(); // Refresh token if verification fails
         if (!token) {
-            return res.status(400).send({ msg: "Unable to refresh token" });
+            return res.status(400).send({ msg: 'Unable to refresh token' });
         }
         isTokenVerified = await verifyToken(token);
     }
 
     if (isTokenVerified) {
         if (!videoId) {
-            return res.status(400).send({ msg: "No ID Parameter Found" });
+            return res.status(400).send({ msg: 'No ID Parameter Found' });
         }
 
         try {
+            // Send analytics data and get the encrypted policy
             const policyEncrypted = await axios.post('https://api.penpencil.co/v3/files/send-analytics-data', {
                 'url': `https://d1d34p8vz63oiq.cloudfront.net/${videoId}/hls/`
             }, {
@@ -84,16 +97,7 @@ app.get('/', async (req, res) => {
                 }
             });
 
-            const getDecryptCookie = (cookie) => {
-                const key = Buffer.from('pw3c199c2911cb437a907b1k0907c17n', 'utf8');
-                const iv = Buffer.from('5184781c32kkc4e8', 'utf8');
-                const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-
-                let decryptedCookie = decipher.update(cookie, 'base64', 'utf8');
-                decryptedCookie += decipher.final('utf8');
-                return decryptedCookie;
-            };
-
+            // Decrypt the policy response
             const parts = policyEncrypted.data.data.split('&');
             let decryptedResponse = '';
             parts.forEach((part) => {
@@ -103,22 +107,24 @@ app.get('/', async (req, res) => {
             });
             decryptedResponse = decryptedResponse.slice(0, -1);
 
-            const Url = `https://cors.pwjarvis.app/${videoId}/hls/${quality}/main.m3u8`;
+            // Construct the URL to fetch the video stream
+            const videoUrl = `https://cors.pwjarvis.app/${videoId}/hls/${quality}/main.m3u8`;
 
             try {
-                const main_data = await axios.get(Url);
-
+                const main_data = await axios.get(videoUrl);
                 res.set('Content-Type', 'text/plain');
                 res.set('Access-Control-Allow-Origin', '*');
                 res.status(200).send(main_data.data);
             } catch (error) {
-                res.status(400).send({ msg: "Your video URL is incorrect or Please choose another resolution" });
+                console.error(`Error fetching video stream: ${error.message}`);
+                res.status(400).send({ msg: 'Your video URL is incorrect or Please choose another resolution' });
             }
         } catch (error) {
-            res.status(500).send("Error on privacy link: " + error.message);
+            console.error(`Error processing request: ${error.message}`);
+            res.status(500).send('Error on privacy link: ' + error.message);
         }
     } else {
-        res.status(401).send("Invalid or expired token.");
+        res.status(401).send('Invalid or expired token.');
     }
 });
 

@@ -103,7 +103,7 @@ app.get('/', async (req, res) => {
             });
             decryptedResponse = decryptedResponse.slice(0, -1);
 
-            const Url = `https://api-six-navy.vercel.app/${videoId}/hls/${quality}/main.m3u8`;
+            const Url = `https://cors.pwjarvis.app/${videoId}/hls/${quality}/main.m3u8`;
 
             try {
                 const main_data = await axios.get(Url);
